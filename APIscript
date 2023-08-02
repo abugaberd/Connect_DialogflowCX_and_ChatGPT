@@ -1,0 +1,87 @@
+#import necessary packages
+from fastapi import FastAPI
+import os
+from fastapi import Request
+import requests
+import sys
+import uvicorn
+
+#define app
+app = FastAPI()
+
+#can keep a running log of the dialogue for ChatGPT
+convo = []
+
+#what to do when API is invoked
+@app.post('/dialogflow')
+async def webhook(request: Request):
+    try:
+        #get request
+        req = await request.json()  
+
+        #pull out just the input text
+        query = req.get('text')
+        
+        #prepend the convo so far to the prompt
+        convo.append('User:' + query)
+        convo.append("Addie:")
+        prompt = ("\n").join(convo)
+        print('prompt so far', convo)
+
+        #actually invoke GPT-querying function (at bottom of code)
+        response = query_gpt(prompt)
+
+        print('gpt resp', response)
+        result = response.get('choices')[0].get('text')
+        result = result.strip('\n')
+            
+        convo.append(result)
+      
+        #return result to Dialogflow in JSON format
+        return {
+                    'fulfillment_response': {
+                        'messages': [
+                            {
+                                'text': {
+                                    'text': [result],
+                                    'redactedText': [result]
+                                },
+                                'responseType': 'HANDLER_PROMPT',
+                                'source': 'VIRTUAL_AGENT'
+                            }
+                        ]
+                    }
+                }
+    except Exception as e:
+        print('error',e)
+        exc_type, exc_obj, exc_tb = sys.exc_info()
+        fname = os.path.split(exc_tb.tb_frame.f_code.co_filename)[1]
+        print('Something went wrong!',exc_type, fname, exc_tb.tb_lineno)
+        return 400
+
+def query_gpt(prompt):
+    body = {
+        "model": "text-davinci-003",
+        "prompt": prompt,
+        "max_tokens": 200,
+        "temperature": 0.9,
+        "top_p": 1,
+        "n": 1,
+        "frequency_penalty":0,
+        "presence_penalty":0.6  
+    }
+    header = {"Authorization": "Bearer " + os.getenv("OPENAI_API_KEY")}
+
+    res = requests.post('https://api.openai.com/v1/completions',
+    json = body, headers = header)
+    print('time elapsed',res.elapsed.total_seconds())
+    # print('\nmodel API response', str(res.json()))
+    return res.json()
+
+@app.get('/')
+def hello(request: Request):
+    print('Server is ALIVE!')
+    return {200: "API is currently running"}
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
